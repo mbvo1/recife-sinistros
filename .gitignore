@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+
+# Dados brutos: não versionar (são baixáveis do portal; ODbL)
+data/raw/*.csv
+data/silver/
+
+# Terraform (fases futuras)
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+
+# IDE / SO
+.vscode/
+.DS_Store
