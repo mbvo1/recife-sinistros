@@ -32,12 +32,16 @@ Fase 1 — Verificar a conta AWS ✅ CONCLUÍDA
 Nota: a suposição inicial de "créditos expiram em 6 meses" (citada nas conversas anteriores) não se confirmou — a conta real mostra expiração em 1 ano. Não sabemos por que a suposição inicial divergiu (pode ter mudado, ou variar por conta/promoção) — o que vale é o que a própria conta mostra.
 
 Fase 2 — IaC base (Terraform) ← ESTAMOS AQUI
- Backend: state em S3 + lock em DynamoDB
- Buckets bronze/silver
- IAM least-privilege
+
+Ordem decidida por dependência (ver ADR-010) e backend por bootstrap (ADR-011).
+
+ Estágio 0 — bootstrap do backend (state local): cria só o bucket de state + lock. Verificar na doc atual: lock via DynamoDB vs. lock nativo S3. Esta infra é durável (sobrevive ao destroy).
+ Config principal usa o bucket acima como backend remoto.
+ Buckets S3 bronze/silver (base — não dependem de nada)
  VPC + subnet privada + S3 Gateway Endpoint
- CloudWatch (log group, métricas)
- Disciplina plan → apply → destroy
+ IAM least-privilege (depois dos buckets — políticas referenciam os ARNs)
+ CloudWatch (log group; destino das métricas do transform)
+ Disciplina plan → apply → destroy (miolo é efêmero; backend permanece)
 Fase 3 — Lambda
  src/handler.py envolvendo o transform
  Empacotamento (resolver limite de tamanho — decidir ZIP vs container)
