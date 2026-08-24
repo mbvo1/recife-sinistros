@@ -35,7 +35,7 @@ Fase 2 — IaC base (Terraform) ← ESTAMOS AQUI
 
 Ordem decidida por dependência (ver ADR-010) e backend por bootstrap (ADR-011).
 
- Estágio 0 — bootstrap do backend (state local): cria só o bucket de state + lock. Verificar na doc atual: lock via DynamoDB vs. lock nativo S3. Esta infra é durável (sobrevive ao destroy).
+ Estágio 0 — bootstrap do backend (state local): cria só o bucket de state, com versionamento (ADR-012). Lock resolvido: nativo do S3 via use_lockfile, sem DynamoDB (ADR-011, atualização de 21/08/2026) — exige Terraform >= 1.11. Esta infra é durável (sobrevive ao destroy).
  Config principal usa o bucket acima como backend remoto.
  Buckets S3 bronze/silver (base — não dependem de nada)
  VPC + subnet privada + S3 Gateway Endpoint

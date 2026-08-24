@@ -62,4 +62,25 @@ Escolhido state remoto (S3 + lock) em vez de state local, apesar de o projeto se
 
 O bucket de state precisa existir antes do Terraform poder usá-lo como backend (problema "ovo e galinha"). Resolvido em dois estágios: uma config Terraform pequena, com state local, cria só o bucket+lock; a config principal usa esse bucket como backend remoto. Consequência prática: o backend de state é infra durável e grátis (poucos KB + requisições de lock) que SOBREVIVE ao terraform destroy de cada sessão; todo o resto (buckets de dado, VPC, Lambda) é infra efêmera, destruída e recriada a cada sessão.
 
-A verificar na implementação (NÃO presumir): o mecanismo de lock. O padrão clássico é DynamoDB, mas o Terraform introduziu lock nativo via S3 (sem DynamoDB) em versão recente. Confirmar na documentação atual qual é o recomendado hoje antes de escrever o backend.
+Atualização (verificado na doc oficial em 21/08/2026) — mecanismo de lock RESOLVIDO: lock nativo do S3, via use_lockfile = true. Sem DynamoDB.
+
+O "a verificar" acima está fechado. A doc atual do backend s3 marca dynamodb_table e dynamodb_endpoint como "(Optional, Deprecated)" e afirma: "DynamoDB-based locking is deprecated and will be removed in a future minor version". O argumento use_lockfile entrou como experimental no Terraform 1.10 e virou GA no 1.11. Nas versões atuais (1.12+) o dynamodb_table ainda funciona, mas com warning — ainda não foi removido. Escolher DynamoDB hoje seria adotar deliberadamente o caminho em vias de extinção.
+
+Por que o DynamoDB existia ali: um lock é uma operação atômica de "criar se não existir". O S3 historicamente não tinha essa primitiva — PutObject sempre sobrescreve — então o Terraform pegou emprestada a escrita condicional do DynamoDB (attribute_not_exists). A tabela nunca guardou state; só o registro de "alguém está aplicando agora". Em ago/2024 o S3 ganhou conditional writes (header If-None-Match: *), que é exatamente a primitiva que faltava. O lock nativo grava um objeto <key>.tflock ao lado do state e o apaga ao terminar. A muleta deixou de ser necessária.
+
+Consequências práticas:
+
+Estágio 0 cria UM recurso durável (o bucket), não dois. Lock virou flag de configuração, não infraestrutura.
+Requisito de versão: Terraform >= 1.11 (GA). Não usar 1.10, onde é experimental.
+IAM (quando chegarmos lá): no objeto do lock, s3:GetObject + s3:PutObject + s3:DeleteObject. No objeto do state, NÃO é preciso s3:DeleteObject — a doc nota que o Terraform nunca apaga o state.
+Custo: não foi o motivo. Uma tabela de lock caberia no always-free do DynamoDB (25 GB + 25 unidades), então o caminho antigo também sairia US$ 0,00. O ganho é arquitetural — um serviço a menos, uma política a menos, e nenhum risco de o argumento sumir num upgrade futuro.
+
+Não verificado (irrelevante para este projeto, mas não afirmar sem checar): se o lock nativo dá as mesmas garantias do DynamoDB em cenário multi-região ou cross-account. Aqui é solo, uma região, uma conta.
+
+ADR-012 — Versionamento no bucket de state
+
+O bucket de state tem versionamento habilitado. Motivo: o lock protege contra escrita concorrente, mas não contra state corrompido, truncado ou apagado por engano — são problemas diferentes. Sem versionamento, um state danificado significa reimportar recurso por recurso na mão. Com versionamento, é restaurar a versão anterior do objeto.
+
+Isso vale mais neste projeto do que no caso comum, porque o miolo da infra é destruído e recriado a cada sessão (ADR-011): o state é gravado com muito mais frequência que o normal, e é a única coisa que liga o código aos recursos reais.
+
+Custo: o bucket guarda poucos KB. Mesmo com dezenas de versões acumuladas, continua na faixa de fração de centavo. Não justifica regra de ciclo de vida por ora — se um dia justificar, é sinal de que algo está errado.
