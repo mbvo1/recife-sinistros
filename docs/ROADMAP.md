@@ -35,6 +35,7 @@ Fase 2 — IaC base (Terraform) ← ESTAMOS AQUI
 
 Ordem decidida por dependência (ver ADR-010) e backend por bootstrap (ADR-011).
 
+ Pré-requisito — credenciais AWS ✅ CONCLUÍDO (26/08/2026): AWS CLI 2.36.29 e Terraform 1.15.8 instalados; usuário IAM terraform-recife-sinistros com AdministratorAccess, access key configurada por aws configure; MFA registrado no root. IAM Identity Center foi avaliado e DESCARTADO — exigiria uma AWS Organization, que expira os créditos imediatamente (ADR-013).
  Estágio 0 — bootstrap do backend (state local): cria só o bucket de state, com versionamento (ADR-012). Lock resolvido: nativo do S3 via use_lockfile, sem DynamoDB (ADR-011, atualização de 21/08/2026) — exige Terraform >= 1.11. Esta infra é durável (sobrevive ao destroy).
  Config principal usa o bucket acima como backend remoto.
  Buckets S3 bronze/silver (base — não dependem de nada)

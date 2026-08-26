@@ -84,3 +84,30 @@ O bucket de state tem versionamento habilitado. Motivo: o lock protege contra es
 Isso vale mais neste projeto do que no caso comum, porque o miolo da infra é destruído e recriado a cada sessão (ADR-011): o state é gravado com muito mais frequência que o normal, e é a única coisa que liga o código aos recursos reais.
 
 Custo: o bucket guarda poucos KB. Mesmo com dezenas de versões acumuladas, continua na faixa de fração de centavo. Não justifica regra de ciclo de vida por ora — se um dia justificar, é sinal de que algo está errado.
+
+ADR-013 — Credenciais: usuário IAM com access key, e NÃO IAM Identity Center
+
+O Terraform autentica na AWS por um usuário IAM dedicado (terraform-recife-sinistros) com AdministratorAccess e uma access key de longa duração, configurada por aws configure no perfil default. O provider lê da credential chain; nenhuma credencial aparece em arquivo .tf.
+
+Esta decisão contraria a recomendação atual da AWS, que é eliminar chaves de longa duração em favor de credenciais temporárias via IAM Identity Center. O motivo é de custo, não de mérito técnico, e está registrado aqui porque a escolha parece errada sem o contexto.
+
+Por que o IAM Identity Center foi descartado (verificado na doc oficial em 26/08/2026):
+
+Instância de CONTA não resolve. A tabela de comparação oficial marca "Multi-account permissions" e "AWS access portal for single-sign on access to your AWS accounts" como NÃO para instância em conta standalone. Sem permission set dando acesso à conta, não há o que o aws configure sso consuma. Instância de conta serve para atribuição de aplicações, não para credenciais de CLI.
+Instância de ORGANIZAÇÃO custaria os créditos. Ela exige uma AWS Organization. O FAQ do Free Tier afirma: "When your account joins an AWS Organization or sets up an AWS Control Tower landing zone, your Free Tier credits expire immediately, and your account will be ineligible to earn more AWS Free Tier credits." Os créditos não migram para a fatura — são perdidos.
+
+Consequência: habilitar o Identity Center custaria US$ 100 e a elegibilidade futura ao Free Tier, para mitigar um risco de segurança modesto num projeto solo. Isso viola a restrição inegociável do projeto (custo zero). Atenção prática: no console, o botão "Enable" do IAM Identity Center numa conta standalone leva à página "Enable IAM Identity Center with AWS Organizations", que cria a organização. É um clique de US$ 100 — não clicar nem por curiosidade.
+
+Por que AdministratorAccess e não PowerUserAccess: a política gerenciada PowerUserAccess usa NotAction com iam:*, permitindo apenas iam:ListRoles e roles service-linked. A Fase 2 prevê criar role e políticas IAM para a Lambda (ADR-010) — com PowerUserAccess esse apply falharia com AccessDenied. Não é preguiça: o projeto legitimamente precisa criar IAM.
+
+Por que não a chave do root: a AWS recomenda explicitamente não criar access key para o root. Chave de root vazada não tem teto de dano e não pode ser contida por política.
+
+Mitigações adotadas:
+
+Usuário IAM dedicado, sem acesso ao console — só API.
+MFA registrado no usuário root (app autenticador no celular, com a secret key guardada fora do aparelho).
+AWS Budget de gasto zero já ativo, alertando acima de US$ 0,01.
+Credencial fora do repositório: mora em ~/.aws/, nunca em .tf; o .gitignore já cobre *.tfvars.
+A chave deve ser revogada quando o projeto encerrar.
+
+Condição que reverteria esta decisão: se a conta deixar de ser de créditos (créditos gastos ou expirados em 20/08/2027), o custo de criar uma Organization desaparece e o IAM Identity Center passa a ser a escolha certa. Revisar nessa data.

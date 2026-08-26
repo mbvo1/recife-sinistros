@@ -91,7 +91,7 @@ terraform plan   # deve dizer "No changes" — se disser, a recuperação deu ce
 ```
 
 Os quatro usam o **nome do bucket** como ID de import (verificado na doc do
-provider em 24/08/2026). Se o nome do bucket tiver mudado, ajuste.
+provider em 26/08/2026). Se o nome do bucket tiver mudado, ajuste.
 
 O `terraform plan` no fim é a validação: se ele reportar mudanças, algo divergiu
 entre o código e o que existe na AWS — investigue antes de aplicar.
