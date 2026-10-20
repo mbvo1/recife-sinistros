@@ -14,7 +14,7 @@ import pytest
  
 from transform_sinistros import (
     transform, _to_int, _to_int_ou_na, _trunca_hora, _limpa_protocolo,
-    _detecta_coluna_severidade,
+    _detecta_coluna_severidade, _gera_relatorio_qualidade_md,
 )
  
  
@@ -384,3 +384,27 @@ def test_contagem_vazia_vira_zero(tmp_path):
     caminho = _escreve_csv(tmp_path, [_linha_2015(moto="")])
     df, _ = transform(caminho, 2015)
     assert df.loc[0, "moto"] == 0
+
+# --- Testes do relatório de qualidade -------------------------------------
+
+def test_vitimasfatais_preenchimento_pct(tmp_path):
+    """1 de 4 linhas preenchida => 25%. Coluna ausente => None, nunca 0%."""
+    linhas = [_linha_2024(Protocolo=f"{i},0", vitimasfatais="") for i in range(3)]
+    linhas.append(_linha_2024(Protocolo="9,0", vitimasfatais="1,0"))
+    _, m = transform(_escreve_csv(tmp_path, linhas), 2024)
+    assert m["vitimasfatais_preenchimento_pct"] == 25.0
+
+    _, m = transform(_escreve_csv(tmp_path, [_linha_2015()]), 2015)
+    assert m["vitimasfatais_preenchimento_pct"] is None
+
+
+def test_relatorio_qualidade_mostra_na_quando_coluna_ausente(tmp_path):
+    """O relatório escreve 'n/a' (não aplicável) para ano sem a coluna, e o
+    percentual com vírgula decimal para ano com a coluna."""
+    _, m2015 = transform(_escreve_csv(tmp_path, [_linha_2015()]), 2015)
+    _, m2024 = transform(_escreve_csv(tmp_path, [_linha_2024()]), 2024)
+    md = _gera_relatorio_qualidade_md([m2015, m2024])
+    linha_2015 = next(l for l in md.splitlines() if l.startswith("| 2015"))
+    linha_2024 = next(l for l in md.splitlines() if l.startswith("| 2024"))
+    assert linha_2015.split("|")[-2].strip() == "n/a"
+    assert linha_2024.split("|")[-2].strip() == "100,00%"

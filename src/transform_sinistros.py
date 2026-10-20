@@ -348,40 +348,95 @@ def transform(caminho_csv: str, ano: int) -> tuple[pd.DataFrame, dict]:
         "bairros_distintos": int(out["bairro"].nunique()),
         "tem_vitimasfatais": tem_vitimasfatais,
         "vitimasfatais_vazias_no_silver": vitimasfatais_vazias,
+        # % de células preenchidas no silver. None quando não há o que medir
+        # (coluna ausente ou silver vazio) — nunca 0% inventado.
+        "vitimasfatais_preenchimento_pct": (
+            round(100 * (len(out) - vitimasfatais_vazias) / len(out), 2)
+            if tem_vitimasfatais and len(out) > 0 else None
+        ),
     }
     return out, metricas
  
  
 # --- Relatório de qualidade -----------------------------------------------
 
+# Tabela principal: uma linha por ano, as colunas que o relatório semanal
+# cita. Cada coluna é (título, função que extrai o texto das métricas).
+COLUNAS_QUALIDADE = [
+    ("Ano", lambda m: str(m["ano"])),
+    ("Linhas entrada", lambda m: str(m["linhas_entrada"])),
+    ("Linhas silver", lambda m: str(m["linhas_silver"])),
+    ("Descartadas (não FINALIZADA)", lambda m: str(m["descartadas_nao_finalizada"])),
+    ("Duplicados removidos",
+     lambda m: str(m["duplicados_linha_identica"] + m["duplicados_protocolo"])),
+    ("Bairro não informado", lambda m: str(m["bairros_nao_informados"])),
+    ("Severidade vazia", lambda m: str(m["severidade_vazia_no_silver"])),
+    ("vitimasfatais existe", lambda m: "sim" if m["tem_vitimasfatais"] else "não"),
+    ("vitimasfatais preenchida", lambda m: _formata_pct(m["vitimasfatais_preenchimento_pct"])),
+]
+
+# Tabela complementar (só no arquivo): anomalias sinalizadas pelo ADR-014 e o
+# detalhe da dedup por critério (ADR-015).
+COLUNAS_QUALIDADE_DETALHE = [
+    ("Ano", lambda m: str(m["ano"])),
+    ("Dup. linha idêntica", lambda m: str(m["duplicados_linha_identica"])),
+    ("Dup. protocolo", lambda m: str(m["duplicados_protocolo"])),
+    ("Severidade fora padrão", lambda m: str(m["severidade_fora_padrao_no_silver"])),
+    ("Datas fora do ano", lambda m: str(m["datas_fora_do_ano"])),
+    ("Bairros distintos", lambda m: str(m["bairros_distintos"])),
+    ("vitimasfatais vazias",
+     lambda m: "n/a" if m["vitimasfatais_vazias_no_silver"] is None
+     else str(m["vitimasfatais_vazias_no_silver"])),
+]
+
+
+def _formata_pct(v) -> str:
+    """12.5 -> '12,50%' ; None -> 'n/a' (não aplicável, não 0%)."""
+    if v is None:
+        return "n/a"
+    return f"{v:.2f}%".replace(".", ",")
+
+
+def _tabela_md(lista_metricas: list[dict], colunas: list) -> str:
+    """
+    Tabela Markdown com colunas alinhadas por espaço: continua Markdown
+    válido e fica legível também impressa no terminal.
+    """
+    cabecalho = [titulo for titulo, _ in colunas]
+    corpo = [[extrai(m) for _, extrai in colunas] for m in lista_metricas]
+    larguras = [max(len(l[i]) for l in [cabecalho] + corpo) for i in range(len(colunas))]
+
+    def _linha(celulas):
+        return "| " + " | ".join(c.rjust(w) for c, w in zip(celulas, larguras)) + " |"
+
+    separador = "|" + "|".join("-" * (w + 1) + ":" for w in larguras) + "|"
+    return "\n".join([_linha(cabecalho), separador] + [_linha(l) for l in corpo])
+
+
 def _gera_relatorio_qualidade_md(lista_metricas: list[dict]) -> str:
     """
-    Monta uma tabela Markdown (uma linha por ano) com as métricas de
-    qualidade, para citar em README/portfólio. Não decide nada — só expõe os
-    números já calculados por transform().
+    Monta o relatório de qualidade (uma linha por ano), para citar em
+    relatório/portfólio. Não decide nada — só expõe os números já calculados
+    por transform().
     """
-    colunas = [
-        ("ano", "Ano"),
-        ("linhas_entrada", "Linhas bruto"),
-        ("linhas_silver", "Linhas silver"),
-        ("descartadas_nao_finalizada", "Descartadas (não finalizada)"),
-        ("severidade_vazia_no_silver", "Severidade vazia"),
-        ("severidade_fora_padrao_no_silver", "Severidade fora padrão"),
-        ("datas_fora_do_ano", "Datas fora do ano"),
-        ("bairros_nao_informados", "Bairro não informado"),
-        ("bairros_distintos", "Bairros distintos"),
-        ("vitimasfatais_vazias_no_silver", "vitimasfatais vazias"),
-    ]
-    linhas = ["# Relatório de qualidade — camada silver", ""]
-    linhas.append("Gerado por `src/transform_sinistros.py`. Ver `docs/decisions.md` (ADR-014) "
-                   "para o porquê de cada métrica.")
-    linhas.append("")
-    linhas.append("| " + " | ".join(titulo for _, titulo in colunas) + " |")
-    linhas.append("|" + "---|" * len(colunas))
-    for m in lista_metricas:
-        linhas.append("| " + " | ".join(str(m[chave]) for chave, _ in colunas) + " |")
-    linhas.append("")
-    return "\n".join(linhas)
+    return "\n".join([
+        "# Relatório de qualidade — camada silver",
+        "",
+        "Gerado por `src/transform_sinistros.py` a partir dos CSVs de `data/raw/`. "
+        "Ver `docs/decisions.md` (ADR-005, ADR-014, ADR-015) para o porquê de cada métrica.",
+        "",
+        "- Descartadas e duplicados somam com as linhas silver: "
+        "entrada = silver + descartadas + duplicados.",
+        "- \"vitimasfatais preenchida\" = % de linhas do silver com a célula "
+        "preenchida; \"n/a\" = coluna ausente no ano.",
+        "",
+        _tabela_md(lista_metricas, COLUNAS_QUALIDADE),
+        "",
+        "## Detalhe",
+        "",
+        _tabela_md(lista_metricas, COLUNAS_QUALIDADE_DETALHE),
+        "",
+    ])
 
 
 # --- Execução local: varre todos os anos de data/raw, grava o silver -----
@@ -448,4 +503,6 @@ if __name__ == "__main__":
         relatorio = _gera_relatorio_qualidade_md(todas_metricas)
         destino_relatorio = RAIZ / "docs" / "relatorio_qualidade_silver.md"
         destino_relatorio.write_text(relatorio, encoding="utf-8")
+        print("\nQualidade por ano:\n")
+        print(_tabela_md(todas_metricas, COLUNAS_QUALIDADE))
         print(f"\nRelatório de qualidade gravado em: {destino_relatorio}")
