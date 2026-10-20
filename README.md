@@ -8,21 +8,27 @@ Plataforma de dados *serverless* sobre sinistros (acidentes) de trânsito do
 Recife, unindo infraestrutura como código (IaC) rigorosa a um pipeline de
 engenharia de dados. Projeto de portfólio pessoal.
 
-## O que já existe (Fase 0)
+## O que já existe (Fases 0 e 1 concluídas, Fase 2 em andamento)
 
 - Transformação **bronze→silver** dos dados anuais da CTTU, em Python puro
   (`src/transform_sinistros.py`), com schema canônico que harmoniza a evolução
   do dado entre 2015 e 2024. Roda nos 10 anos reais (2015–2024) sem erro;
   anomalias de qualidade são sinalizadas, nunca corrigidas ou descartadas em
   silêncio (ver `docs/decisions.md`, ADR-014).
-- Suíte de testes local (`tests/`) — 23 testes, sem dependência dos CSVs reais.
-- Silver persistido em `data/silver/` (CSV, não versionado) e relatório de
-  qualidade por ano em `docs/relatorio_qualidade_silver.md`.
+  Remove só duplicados técnicos (ver ADR-015).
+- Suíte de testes local (`tests/`), sem dependência dos CSVs reais.
+- Silver persistido em `data/silver/` (CSV por ano + consolidado, não
+  versionado) e relatório de qualidade por ano em
+  `docs/relatorio_qualidade_silver.md`.
+- Fase 1: conta AWS verificada, com AWS Budget de gasto zero.
+- Fase 2, Estágio 0: Terraform do bucket de state em `terraform/bootstrap/`
+  (ADR-011, ADR-012).
 
 ## O que ainda NÃO existe
 
-Toda a camada de nuvem (VPC, S3, Lambda, IAM, CloudWatch), o Terraform, a
-ingestão via API do CKAN e o CI. Ver `docs/ROADMAP.md` para as fases.
+O resto da Fase 2 (config principal do Terraform, buckets bronze/silver, VPC,
+IAM, CloudWatch), a Lambda, a ingestão via API do CKAN e o CI. Ver
+`docs/ROADMAP.md` para as fases.
 
 ## Arquitetura pretendida
 
@@ -38,7 +44,7 @@ Upload/ingestão de dado bruto (CTTU)
         ▼
    CloudWatch (logs, métricas, alarme de erro/custo)
 
-Provisionado via Terraform (state em S3 + lock DynamoDB),
+Provisionado via Terraform (state em S3 + lock nativo do S3, ADR-011),
 com CI via GitHub Actions + Checkov.
 ```
 

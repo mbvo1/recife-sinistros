@@ -27,9 +27,12 @@ Resumo do que mais pega gente de surpresa:
     'data_fora_do_ano', 'severidade_anomala'/'severidade_original',
     'bairro_original' e ADR-014.
 
-Validado contra os 10 anos reais (2015-2024): roda sem erro, 18 testes
-passam, e a varredura de qualidade por ano foi conferida manualmente — ver
-docs/decisions.md (ADR-014) e docs/ROADMAP.md.
+  - Dedup só de duplicados técnicos (linha idêntica ou protocolo repetido),
+    depois do filtro FINALIZADA. Ver ADR-015.
+
+Validado contra os 10 anos reais (2015-2024): roda sem erro, e a varredura
+de qualidade por ano foi conferida manualmente — ver docs/decisions.md
+(ADR-014, ADR-015) e docs/relatorio_qualidade_silver.md.
 """
 
 from __future__ import annotations

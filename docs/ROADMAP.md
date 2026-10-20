@@ -14,7 +14,7 @@ Fases
 Fase 0 — Fundações locais (sem AWS, custo zero) ✅ CONCLUÍDA
  Definir schema canônico (silver) a partir do dado real
  Escrever a transformação bronze→silver (src/transform_sinistros.py)
- Suíte de testes local (tests/, 23 testes passando)
+ Suíte de testes local (tests/, 31 testes passando em 20/10/2026)
  Estrutura do repositório
  Baixar os 10 anos (2015–2024) e colocar em data/raw/
  Rodar o transform nos 10 anos e conferir as métricas de cada um — todos os 10 anos passam sem erro.
