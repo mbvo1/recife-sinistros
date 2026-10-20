@@ -111,14 +111,42 @@ def test_severidade_vazia_nao_quebra_e_e_contada(tmp_path):
     """
     Uma linha com severidade em branco não deve quebrar o transform (a coluna
     ainda é identificável pelas OUTRAS linhas válidas) nem sumir do silver:
-    deve aparecer na métrica 'severidade_vazia_no_silver'.
-    Achado real: 147 linhas assim em 2016 (natureza_acidente vazia).
+    deve virar "NÃO INFORMADO" (nunca ficar "" nem ser descartada), com o
+    valor cru preservado em 'severidade_original' e sinalizada em
+    'severidade_anomala'. Contada na métrica 'severidade_vazia_no_silver'.
+    Achado real: 147 linhas assim no bruto de 2016 (mas a maioria é
+    CANCELADA/PENDENTE; só 4 sobrevivem ao filtro FINALIZADA).
     """
     linhas = [_linha_2015(tipo="SEM VÍTIMA"), _linha_2015(tipo="")]
     caminho = _escreve_csv(tmp_path, linhas)
     df, m = transform(caminho, 2015)
     assert m["severidade_vazia_no_silver"] == 1
-    assert "" in set(df["severidade"])
+    assert df.loc[1, "severidade"] == "NÃO INFORMADO"
+    assert df.loc[1, "severidade_original"] == ""
+    assert bool(df.loc[1, "severidade_anomala"]) is True
+    assert bool(df.loc[0, "severidade_anomala"]) is False
+
+
+def test_severidade_fora_do_padrao_vira_nao_informado(tmp_path):
+    """
+    Severidade fora do padrão (ex.: "APOIO", vazamento de outro campo —
+    achado real em 2019) também vira "NÃO INFORMADO" + flag, com o valor cru
+    preservado, igual ao caso de severidade vazia — nunca é inventada nem
+    silenciosamente descartada.
+    """
+    linhas = (
+        [_linha_2015(natureza_acidente="SEM VÍTIMA") for _ in range(20)]
+        + [_linha_2015(natureza_acidente="APOIO")]
+    )
+    for l in linhas:
+        l.pop("natureza", None)
+        l["tipo"] = "COLISÃO"
+    caminho = _escreve_csv(tmp_path, linhas)
+    df, m = transform(caminho, 2019)
+    assert m["severidade_fora_padrao_no_silver"] == 1
+    linha_anomala = df[df["severidade_original"] == "APOIO"].iloc[0]
+    assert linha_anomala["severidade"] == "NÃO INFORMADO"
+    assert bool(linha_anomala["severidade_anomala"]) is True
  
 def test_colunas_maiusculas_sao_normalizadas(tmp_path):
     """
@@ -174,6 +202,21 @@ def test_deteccao_falha_alto(tmp_path):
  
 # --- Testes do filtro de qualidade ----------------------------------------
  
+def test_data_fora_do_ano_e_sinalizada_mas_nao_corrigida(tmp_path):
+    """
+    Achado real em 2024: 32 linhas (silver) com data em dez/2025 dentro do
+    arquivo de 2024, causa desconhecida. O transform NÃO corrige a data —
+    só marca 'data_fora_do_ano'=True, preservando a data original.
+    """
+    linhas = [_linha_2024(data="2024-01-01"), _linha_2024(data="2025-12-31")]
+    caminho = _escreve_csv(tmp_path, linhas)
+    df, m = transform(caminho, 2024)
+    assert m["datas_fora_do_ano"] == 1
+    assert bool(df.loc[0, "data_fora_do_ano"]) is False
+    assert bool(df.loc[1, "data_fora_do_ano"]) is True
+    assert str(df.loc[1, "data"]) == "2025-12-31"  # data preservada, não corrigida
+
+
 def test_filtro_finalizada(tmp_path):
     linhas = [
         _linha_2015(situacao="FINALIZADA"),
@@ -199,6 +242,30 @@ def test_vitimasfatais_presente_parseia(tmp_path):
     caminho = _escreve_csv(tmp_path, [_linha_2024(vitimasfatais="2,0")])
     df, _ = transform(caminho, 2024)
     assert df.loc[0, "vitimasfatais"] == 2
+
+
+def test_vitimasfatais_vazio_quando_coluna_presente_vira_zero_sinalizado(tmp_path):
+    """
+    Achado real: em 2016-2020 a coluna 'vitimasfatais' existe mas está vazia
+    em >99% das linhas. Vazio vira 0 (inferência), mas fica sinalizado em
+    'vitimasfatais_inferido' para quem for somar poder ser conservador.
+    """
+    linhas = [_linha_2024(vitimasfatais=""), _linha_2024(vitimasfatais="1,0")]
+    caminho = _escreve_csv(tmp_path, linhas)
+    df, m = transform(caminho, 2024)
+    assert df.loc[0, "vitimasfatais"] == 0
+    assert bool(df.loc[0, "vitimasfatais_inferido"]) is True
+    assert df.loc[1, "vitimasfatais"] == 1
+    assert bool(df.loc[1, "vitimasfatais_inferido"]) is False
+    assert m["vitimasfatais_inferido_no_silver"] == 1
+
+
+def test_vitimasfatais_inferido_e_nulo_quando_coluna_ausente(tmp_path):
+    """2015 não tem a coluna: 'vitimasfatais_inferido' deve ser nulo (não
+    aplicável), não False — False implicaria que a coluna existia."""
+    caminho = _escreve_csv(tmp_path, [_linha_2015()])
+    df, _ = transform(caminho, 2015)
+    assert pd.isna(df.loc[0, "vitimasfatais_inferido"])
  
  
 # --- Testes de limpeza de campos ------------------------------------------
@@ -207,6 +274,20 @@ def test_bairro_vazio_vira_nao_informado(tmp_path):
     caminho = _escreve_csv(tmp_path, [_linha_2015(bairro="   ")])
     df, _ = transform(caminho, 2015)
     assert df.loc[0, "bairro"] == "NÃO INFORMADO"
+    assert df.loc[0, "bairro_original"] == "NÃO INFORMADO"
+
+
+def test_bairro_normaliza_acento_preservando_original(tmp_path):
+    """
+    Achado real: 'HIPÓDROMO' (2015-2022) e 'HIPODROMO' (2023-2024) são o
+    mesmo bairro com grafias diferentes. 'bairro' remove o acento de forma
+    determinística para unificar; 'bairro_original' preserva a grafia crua.
+    """
+    linhas = [_linha_2015(bairro="HIPÓDROMO"), _linha_2015(bairro="HIPODROMO")]
+    caminho = _escreve_csv(tmp_path, linhas)
+    df, _ = transform(caminho, 2015)
+    assert set(df["bairro"]) == {"HIPODROMO"}
+    assert set(df["bairro_original"]) == {"HIPÓDROMO", "HIPODROMO"}
  
 def test_id_sintetico_quando_sem_protocolo(tmp_path):
     caminho = _escreve_csv(tmp_path, [_linha_2015()])

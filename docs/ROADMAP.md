@@ -14,16 +14,20 @@ Fases
 Fase 0 — Fundações locais (sem AWS, custo zero) ✅ CONCLUÍDA
  Definir schema canônico (silver) a partir do dado real
  Escrever a transformação bronze→silver (src/transform_sinistros.py)
- Suíte de testes local (tests/, 18 testes passando)
+ Suíte de testes local (tests/, 23 testes passando)
  Estrutura do repositório
  Baixar os 10 anos (2015–2024) e colocar em data/raw/
  Rodar o transform nos 10 anos e conferir as métricas de cada um — todos os 10 anos passam sem erro.
+ Validação de qualidade por ano (09/10/2026): anomalias reais tratadas (ver ADR-014), silver persistido em data/silver/ (CSV) e relatório de qualidade em docs/relatorio_qualidade_silver.md.
 
 Achados da varredura completa (2015–2024):
 
 A coluna de severidade mudou de nome duas vezes: natureza (2015) → natureza_acidente (2016–2021) → natureza de novo (2022–2024). A detecção por valor (não por nome fixo) absorveu a reversão sem precisar de ajuste — validação de que essa foi a estratégia certa.
-2020 tem volume bem menor (4.092 linhas) que os anos vizinhos. Hipótese não confirmada: efeito da pandemia no trânsito. Investigar na Fase 6 se relevante para a análise.
-Todos os anos de 2016 em diante têm vitimasfatais; só 2015 não tem.
+2015 cobre só jun–dez (7 meses) — não é um ano completo.
+Volume bruto varia bastante e sem explicação confirmada: 12.062 (2019) → 4.092 (2020) → 2.380 (2021) → 2.669 (2022) → 4.032 (2023) → 5.315 (2024). Hipótese de efeito da pandemia não confirmada. Documentado como limitação; não "corrigir" — investigar na Fase 6 se for relevante para a análise.
+vitimasfatais: ausente em 2015; presente mas vazia em >99% das linhas em 2016–2020; 100% preenchida de 2021 em diante. O vazio virando 0 é inferência documentada (ver ADR-014), sinalizada em vitimasfatais_inferido.
+2024 tem 32 linhas (silver) com data em dez/2025 — causa desconhecida, sinalizada em data_fora_do_ano, não corrigida.
+125 valores distintos de bairro no bruto; 98 depois de normalizar acento (ver ADR-014) — perto dos 94 bairros oficiais do Recife + "NÃO INFORMADO". Alguns residuais (ex.: "IPESEP" vs "IPSEP") não são acento e ficam como pendência.
 Fase 1 — Verificar a conta AWS ✅ CONCLUÍDA
  Confirmar modelo da conta: legado vs. créditos → modelo de créditos (conta criada em 20/08/2026, após a mudança de jul/2025)
  Confirmar saldo de créditos e data de expiração → US$ 100,00 ativos, US$ 0,00 usados, expira em 20/08/2027
@@ -64,5 +68,6 @@ Fase 7 — Polimento de portfólio
 Pendências conhecidas (não esquecer)
 Granularidade de tipo_sinistro: 2024 é fino, 2015 é grosso. Se quiser comparar espécie entre anos, precisa de uma tabela de-para. Em aberto.
 vitimas cru: o dicionário oficial contradiz o dado de 2015; não derivamos "total de vítimas". Ver ADR-007.
-Anos 2016–2023: transform não testado neles ainda (Fase 0).
+Bairro: recuperar os vazios (148 em 2019) a partir do texto do endereço foi avaliado e NÃO aplicado — só 12/145 (8%) casaram por substring simples, com falso-positivo claro. Precisaria de uma base de ruas real. Em aberto.
+Bairro: ~4 variações de nome residuais após normalizar acento (ex.: "IPESEP" vs "IPSEP", "JOANA BEZERRA" vs "ILHA JOANA BEZERRA") não são acento — não corrigidas por exigirem julgamento, não regra determinística. Em aberto.
 Papel no Projeto 5e6 (CESAR): se/como este projeto absorve a camada de deploy AWS daquela disciplina — ainda em aberto.

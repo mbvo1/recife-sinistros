@@ -11,22 +11,30 @@ função é depois embrulhada dentro da Lambda (ver src/handler.py, fase futura)
  
 As decisões de projeto embutidas aqui estão documentadas em docs/decisions.md.
 Resumo do que mais pega gente de surpresa:
- 
+
   - SWAP tipo<->natureza: o significado de 'tipo' e 'natureza' inverteu entre
     2015 e 2024. NÃO mapeamos por nome de coluna; detectamos qual coluna é
     SEVERIDADE pelos VALORES (ver _detecta_coluna_severidade).
-  - 'vitimasfatais' ausente num ano => NULO, jamais 0.
+  - 'vitimasfatais' ausente num ano => NULO, jamais 0. Quando a coluna existe
+    mas a célula está vazia (comum em 2016-2020), vira 0 — inferência
+    documentada e sinalizada em 'vitimasfatais_inferido' (ver ADR-014).
   - Vazio em contagem de veículo => 0 (inferência documentada).
   - 'vitimas' mantido cru: o dicionário oficial afirma uma regra que o dado de
     2015 desmente, então não derivamos "total de vítimas".
- 
-Validado contra 2015 e 2024. Anos intermediários (2016-2023) precisam ser
-rodados e conferidos — a detecção por valor foi desenhada pra aguentar, mas
-é hipótese até você testar.
+  - Anomalias de qualidade NUNCA são corrigidas ou descartadas em silêncio:
+    são marcadas com uma coluna booleana de flag e o valor original é
+    preservado numa coluna '_original' quando a célula é reescrita. Ver
+    'data_fora_do_ano', 'severidade_anomala'/'severidade_original',
+    'bairro_original' e ADR-014.
+
+Validado contra os 10 anos reais (2015-2024): roda sem erro, 18 testes
+passam, e a varredura de qualidade por ano foi conferida manualmente — ver
+docs/decisions.md (ADR-014) e docs/ROADMAP.md.
 """
- 
+
 from __future__ import annotations
 import re
+import unicodedata
 import pandas as pd
  
  
@@ -42,10 +50,11 @@ COLS_CONTAGEM = ["auto", "moto", "ciclom", "ciclista", "pedestre",
  
 # Ordem final das colunas do silver.
 COLS_SILVER = (
-    ["id_sinistro", "ano", "data", "hora", "severidade", "tipo_sinistro",
-     "bairro", "endereco", "numero", "complemento"]
+    ["id_sinistro", "ano", "data", "data_fora_do_ano", "hora",
+     "severidade", "severidade_original", "severidade_anomala", "tipo_sinistro",
+     "bairro", "bairro_original", "endereco", "numero", "complemento"]
     + COLS_CONTAGEM
-    + ["vitimas", "vitimasfatais"]
+    + ["vitimas", "vitimasfatais", "vitimasfatais_inferido"]
 )
  
  
@@ -82,6 +91,19 @@ def _trunca_hora(v: str):
     return s.split(".")[0][:8]
  
  
+def _remove_acentos(v: str) -> str:
+    """
+    'HIPÓDROMO' -> 'HIPODROMO'. Normalização determinística de acento (sem
+    dependência externa, só unicodedata da stdlib), usada para unificar
+    grafias de bairro entre anos (achado real: 'HIPÓDROMO' em 2015-2022 vs
+    'HIPODROMO' em 2023-2024). O valor com acento original é preservado em
+    'bairro_original'.
+    """
+    return "".join(
+        c for c in unicodedata.normalize("NFD", v) if unicodedata.category(c) != "Mn"
+    )
+
+
 def _limpa_protocolo(v: str):
     """'292972,0' -> '292972' (foi exportado como float com vírgula)."""
     s = str(v).strip().replace(",", ".")
@@ -193,33 +215,65 @@ def transform(caminho_csv: str, ano: int) -> tuple[pd.DataFrame, dict]:
         out["id_sinistro"] = [f"{ano}-{i:06d}" for i in range(linhas_entrada)]
  
     out["ano"] = ano
-    out["data"] = pd.to_datetime(
+    data_dt = pd.to_datetime(
         bruto["data"].str.strip(), format="%Y-%m-%d", errors="coerce"
-    ).dt.date
+    )
+    out["data"] = data_dt.dt.date
+    # Sinaliza data fora do ano do próprio arquivo (achado real em 2024: 32
+    # linhas com data em dez/2025, causa desconhecida). NÃO corrige a data —
+    # só marca, para quem for analisar decidir o que fazer. Ver ADR-014.
+    out["data_fora_do_ano"] = ((data_dt.dt.year != ano) & data_dt.notna()).values
     out["hora"] = bruto["hora"].map(_trunca_hora)
- 
-    out["severidade"] = bruto[col_sev].map(lambda x: _norm_texto(x).upper())
+
+    # Severidade vazia ou fora do padrão (ex.: "APOIO", "OUTROS" — vazamento
+    # de outro campo ou valor genérico do sistema de origem) NUNCA é
+    # descartada nem inventada: o valor cru fica em 'severidade_original' e
+    # 'severidade' recebe "NÃO INFORMADO", com 'severidade_anomala'=True.
+    # Ver ADR-014.
+    severidade_bruta = bruto[col_sev].map(lambda x: _norm_texto(x).upper())
+    severidade_anomala = ~severidade_bruta.isin(SEVERIDADE_VALIDAS)
+    out["severidade_original"] = severidade_bruta.values
+    out["severidade"] = severidade_bruta.where(~severidade_anomala, "NÃO INFORMADO").values
+    out["severidade_anomala"] = severidade_anomala.values
+
     out["tipo_sinistro"] = (
         bruto[col_tipo].map(lambda x: _norm_texto(x).upper())
         if col_tipo in bruto.columns else ""
     )
- 
-    out["bairro"] = bruto["bairro"].map(lambda x: _norm_texto(x).upper())
-    out.loc[out["bairro"] == "", "bairro"] = "NÃO INFORMADO"
- 
+
+    # Bairro: grafia original preservada em 'bairro_original'; 'bairro' leva
+    # a normalização determinística de acento (achado real: 'HIPÓDROMO' em
+    # 2015-2022 vs 'HIPODROMO' em 2023-2024). O marcador "NÃO INFORMADO" é
+    # vocabulário controlado, não dado bruto — fica de fora da normalização
+    # de acento para não virar "NAO INFORMADO" e quebrar a métrica abaixo.
+    # Ver ADR-014.
+    bairro_bruto = bruto["bairro"].map(lambda x: _norm_texto(x).upper())
+    bairro_vazio = bairro_bruto == ""
+    out["bairro_original"] = bairro_bruto.where(~bairro_vazio, "NÃO INFORMADO").values
+    out["bairro"] = (
+        bairro_bruto.map(_remove_acentos).where(~bairro_vazio, "NÃO INFORMADO").values
+    )
+
     for c in ["endereco", "numero", "complemento"]:
         out[c] = bruto[c].map(_norm_texto) if c in bruto.columns else ""
- 
+
     for c in COLS_CONTAGEM:
         out[c] = bruto[c].map(_to_int) if c in bruto.columns else 0
- 
+
     out["vitimas"] = bruto["vitimas"].map(_to_int) if "vitimas" in bruto.columns else 0
- 
-    # vitimasfatais: coluna ausente no ano => NULO (nunca 0).
+
+    # vitimasfatais: coluna ausente no ano => NULO (nunca 0). Quando a
+    # coluna existe mas a CÉLULA está vazia (achado real: >99% vazia em
+    # 2016-2020), vira 0 — inferência documentada, sinalizada em
+    # 'vitimasfatais_inferido' para quem for somar poder excluir se quiser
+    # ser conservador. Ver ADR-014.
     if "vitimasfatais" in bruto.columns:
+        vitimasfatais_vazia = bruto["vitimasfatais"].map(lambda x: _norm_texto(x) == "")
         out["vitimasfatais"] = bruto["vitimasfatais"].map(_to_int)
+        out["vitimasfatais_inferido"] = vitimasfatais_vazia.values
     else:
         out["vitimasfatais"] = pd.NA
+        out["vitimasfatais_inferido"] = pd.NA
  
     situacao = bruto["situacao"].map(lambda x: _norm_texto(x).upper())
  
@@ -237,25 +291,70 @@ def transform(caminho_csv: str, ano: int) -> tuple[pd.DataFrame, dict]:
         "coluna_severidade_detectada": col_sev,
         "coluna_especie_detectada": col_tipo,
         "severidade_ruido_no_bruto": sev_linhas_ruido,
-        "severidade_vazia_no_silver": int((out["severidade"] == "").sum()),
+        "severidade_vazia_no_silver": int((out["severidade_original"] == "").sum()),
+        "severidade_fora_padrao_no_silver": int(
+            ((out["severidade_original"] != "") & out["severidade_anomala"]).sum()
+        ),
         "datas_invalidas": int(out["data"].isna().sum()),
+        "datas_fora_do_ano": int(out["data_fora_do_ano"].sum()),
         "contagens_nao_parseaveis": int(out[COLS_CONTAGEM].isna().any(axis=1).sum()),
         "bairros_nao_informados": int((out["bairro"] == "NÃO INFORMADO").sum()),
+        "bairros_distintos": int(out["bairro"].nunique()),
         "tem_vitimasfatais": "vitimasfatais" in bruto.columns,
+        "vitimasfatais_inferido_no_silver": int(
+            pd.Series(out["vitimasfatais_inferido"]).fillna(False).astype(bool).sum()
+        ),
     }
     return out, metricas
  
  
-# --- Execução local: varre todos os anos de data/raw ---------------------
- 
+# --- Relatório de qualidade -----------------------------------------------
+
+def _gera_relatorio_qualidade_md(lista_metricas: list[dict]) -> str:
+    """
+    Monta uma tabela Markdown (uma linha por ano) com as métricas de
+    qualidade, para citar em README/portfólio. Não decide nada — só expõe os
+    números já calculados por transform().
+    """
+    colunas = [
+        ("ano", "Ano"),
+        ("linhas_entrada", "Linhas bruto"),
+        ("linhas_silver", "Linhas silver"),
+        ("descartadas_nao_finalizada", "Descartadas (não finalizada)"),
+        ("severidade_vazia_no_silver", "Severidade vazia"),
+        ("severidade_fora_padrao_no_silver", "Severidade fora padrão"),
+        ("datas_fora_do_ano", "Datas fora do ano"),
+        ("bairros_nao_informados", "Bairro não informado"),
+        ("bairros_distintos", "Bairros distintos"),
+        ("vitimasfatais_inferido_no_silver", "vitimasfatais inferido (vazio->0)"),
+    ]
+    linhas = ["# Relatório de qualidade — camada silver", ""]
+    linhas.append("Gerado por `src/transform_sinistros.py`. Ver `docs/decisions.md` (ADR-014) "
+                   "para o porquê de cada métrica.")
+    linhas.append("")
+    linhas.append("| " + " | ".join(titulo for _, titulo in colunas) + " |")
+    linhas.append("|" + "---|" * len(colunas))
+    for m in lista_metricas:
+        linhas.append("| " + " | ".join(str(m[chave]) for chave, _ in colunas) + " |")
+    linhas.append("")
+    return "\n".join(linhas)
+
+
+# --- Execução local: varre todos os anos de data/raw, grava o silver -----
+
 if __name__ == "__main__":
     from pathlib import Path
- 
-    RAW = Path(__file__).resolve().parents[1] / "data" / "raw"
+
+    RAIZ = Path(__file__).resolve().parents[1]
+    RAW = RAIZ / "data" / "raw"
+    SILVER = RAIZ / "data" / "silver"
     ANOS = range(2015, 2025)  # 2015..2024
- 
+
     print(f"Procurando CSVs em: {RAW}\n")
+    SILVER.mkdir(parents=True, exist_ok=True)
+
     achou = False
+    todas_metricas = []
     for ano in ANOS:
         # Aceita o nome limpo; ajuste o padrão se seus arquivos tiverem outro.
         candidatos = list(RAW.glob(f"*{ano}*.csv"))
@@ -264,13 +363,26 @@ if __name__ == "__main__":
             continue
         achou = True
         df, m = transform(str(candidatos[0]), ano)
+        todas_metricas.append(m)
+
+        destino = SILVER / f"sinistros_{ano}.csv"
+        df.to_csv(destino, sep=";", index=False, encoding="utf-8")
+
         print(f"  {ano}: {m['linhas_entrada']:>6} -> {m['linhas_silver']:>6} silver "
               f"| descartadas={m['descartadas_nao_finalizada']:>5} "
               f"| sev='{m['coluna_severidade_detectada']}' esp='{m['coluna_especie_detectada']}' "
               f"| sev_vazia={m['severidade_vazia_no_silver']:>4} "
-              f"| sev_ruido={m['severidade_ruido_no_bruto']:>3} "
-              f"| vitfatais={'sim' if m['tem_vitimasfatais'] else 'não'}")
- 
+              f"| sev_fora_padrao={m['severidade_fora_padrao_no_silver']:>2} "
+              f"| datas_fora_do_ano={m['datas_fora_do_ano']:>3} "
+              f"| vitfatais={'sim' if m['tem_vitimasfatais'] else 'não'} "
+              f"-> {destino.name}")
+
     if not achou:
         print("\nNenhum CSV encontrado. Baixe os arquivos anuais do portal e "
               "coloque em data/raw/ (ver data/README.md).")
+    else:
+        relatorio = _gera_relatorio_qualidade_md(todas_metricas)
+        destino_relatorio = RAIZ / "docs" / "relatorio_qualidade_silver.md"
+        destino_relatorio.write_text(relatorio, encoding="utf-8")
+        print(f"\nSilver gravado em: {SILVER}")
+        print(f"Relatório de qualidade gravado em: {destino_relatorio}")

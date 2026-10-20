@@ -1,7 +1,8 @@
 # Plataforma Serverless de Sinistros de Trânsito — Recife (CTTU)
 
-> **Status: em construção (Fase 0 de 7).** Este README descreve o estado real
-> do projeto, sem inflar o que ainda não existe. Ver `docs/ROADMAP.md`.
+> **Status: em construção (Fase 2 de 7).** Este README descreve o estado real
+> do projeto, sem inflar o que ainda não existe. Ver `docs/ROADMAP.md` —
+> é a fonte da verdade sobre em que fase estamos.
 
 Plataforma de dados *serverless* sobre sinistros (acidentes) de trânsito do
 Recife, unindo infraestrutura como código (IaC) rigorosa a um pipeline de
@@ -11,8 +12,12 @@ engenharia de dados. Projeto de portfólio pessoal.
 
 - Transformação **bronze→silver** dos dados anuais da CTTU, em Python puro
   (`src/transform_sinistros.py`), com schema canônico que harmoniza a evolução
-  do dado entre 2015 e 2024.
-- Suíte de testes local (`tests/`) — 13 testes, sem dependência dos CSVs reais.
+  do dado entre 2015 e 2024. Roda nos 10 anos reais (2015–2024) sem erro;
+  anomalias de qualidade são sinalizadas, nunca corrigidas ou descartadas em
+  silêncio (ver `docs/decisions.md`, ADR-014).
+- Suíte de testes local (`tests/`) — 23 testes, sem dependência dos CSVs reais.
+- Silver persistido em `data/silver/` (CSV, não versionado) e relatório de
+  qualidade por ano em `docs/relatorio_qualidade_silver.md`.
 
 ## O que ainda NÃO existe
 
