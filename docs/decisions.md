@@ -12,7 +12,9 @@ Dado que há um recurso dentro da VPC (a Lambda, ver ADR-001) que precisa alcan�
 
 ADR-003 — Schema canônico "opção A" + vitimasfatais
 
-O silver projeta para um conjunto fixo de ~19 conceitos comuns aos anos, mais vitimasfatais. Motivo de incluir vitimasfatais mesmo sendo só de 2019+: severidade é o sinal central de um projeto de trânsito, e lidar com evolução de schema (campo que nasce no meio da série, com nulo honesto para anos antigos) é competência a demonstrar. Nulo para anos sem a coluna — nunca zero.
+O silver projeta para um conjunto fixo de ~19 conceitos comuns aos anos, mais vitimasfatais. Motivo de incluir vitimasfatais mesmo sendo só de 2021+: severidade é o sinal central de um projeto de trânsito, e lidar com evolução de schema (campo que nasce no meio da série, com nulo honesto para anos antigos) é competência a demonstrar. Nulo para anos sem a coluna — nunca zero.
+
+Correção (20/10/2026, medido nos CSVs reais): a versão anterior deste ADR dizia "2019+", e o ROADMAP dizia 2021+. O dado decide: a coluna está ausente em 2015; presente mas com 0,25% a 0,57% de preenchimento no silver em 2016-2020 (2019: 0,25%); e 100% preenchida de 2021 a 2024. A coluna só é utilizável a partir de 2021. Ver docs/relatorio_qualidade_silver.md.
 
 ADR-004 — Detecção de severidade por VALOR (swap tipo/natureza + rename)
 
