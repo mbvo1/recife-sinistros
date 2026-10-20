@@ -25,7 +25,7 @@ Achados da varredura completa (2015–2024):
 A coluna de severidade mudou de nome duas vezes: natureza (2015) → natureza_acidente (2016–2021) → natureza de novo (2022–2024). A detecção por valor (não por nome fixo) absorveu a reversão sem precisar de ajuste — validação de que essa foi a estratégia certa.
 2015 cobre só jun–dez (7 meses) — não é um ano completo.
 Volume bruto varia bastante e sem explicação confirmada: 12.062 (2019) → 4.092 (2020) → 2.380 (2021) → 2.669 (2022) → 4.032 (2023) → 5.315 (2024). Hipótese de efeito da pandemia não confirmada. Documentado como limitação; não "corrigir" — investigar na Fase 6 se for relevante para a análise.
-vitimasfatais: ausente em 2015; presente mas vazia em >99% das linhas em 2016–2020; 100% preenchida de 2021 em diante. O vazio virando 0 é inferência documentada (ver ADR-014), sinalizada em vitimasfatais_inferido.
+vitimasfatais: ausente em 2015; presente mas vazia em >99% das linhas em 2016–2020; 100% preenchida de 2021 em diante. Célula vazia vira NULO (desconhecido), nunca 0 — revisão de 20/10/2026 do ADR-014 item 4.
 2024 tem 32 linhas (silver) com data em dez/2025 — causa desconhecida, sinalizada em data_fora_do_ano, não corrigida.
 125 valores distintos de bairro no bruto; 98 depois de normalizar acento (ver ADR-014) — perto dos 94 bairros oficiais do Recife + "NÃO INFORMADO". Alguns residuais (ex.: "IPESEP" vs "IPSEP") não são acento e ficam como pendência.
 Fase 1 — Verificar a conta AWS ✅ CONCLUÍDA

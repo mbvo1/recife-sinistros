@@ -13,7 +13,7 @@ import pandas as pd
 import pytest
  
 from transform_sinistros import (
-    transform, _to_int, _trunca_hora, _limpa_protocolo,
+    transform, _to_int, _to_int_ou_na, _trunca_hora, _limpa_protocolo,
     _detecta_coluna_severidade,
 )
  
@@ -244,28 +244,47 @@ def test_vitimasfatais_presente_parseia(tmp_path):
     assert df.loc[0, "vitimasfatais"] == 2
 
 
-def test_vitimasfatais_vazio_quando_coluna_presente_vira_zero_sinalizado(tmp_path):
+def test_to_int_ou_na_formatos():
+    """Parser de vitimasfatais: igual a _to_int, exceto vazio -> NA."""
+    assert _to_int_ou_na("1") == 1
+    assert _to_int_ou_na("2,0") == 2    # vírgula decimal
+    assert _to_int_ou_na("") is pd.NA   # vazio -> desconhecido, nunca 0
+    assert _to_int_ou_na("lixo") is None
+
+
+def test_vitimasfatais_celula_vazia_com_coluna_presente_vira_nulo(tmp_path):
     """
-    Achado real: em 2016-2020 a coluna 'vitimasfatais' existe mas está vazia
-    em >99% das linhas. Vazio vira 0 (inferência), mas fica sinalizado em
-    'vitimasfatais_inferido' para quem for somar poder ser conservador.
+    Regressão do bug: em 2016-2020 a coluna 'vitimasfatais' existe mas está
+    vazia em >99% das linhas. Antes, o vazio virava 0 e esses anos saíam
+    como "zero mortes". Vazio deve virar NA (desconhecido), e ser contado
+    na métrica 'vitimasfatais_vazias_no_silver'.
     """
     linhas = [_linha_2024(vitimasfatais=""), _linha_2024(vitimasfatais="1,0")]
     caminho = _escreve_csv(tmp_path, linhas)
     df, m = transform(caminho, 2024)
-    assert df.loc[0, "vitimasfatais"] == 0
-    assert bool(df.loc[0, "vitimasfatais_inferido"]) is True
+    assert pd.isna(df.loc[0, "vitimasfatais"])
     assert df.loc[1, "vitimasfatais"] == 1
-    assert bool(df.loc[1, "vitimasfatais_inferido"]) is False
-    assert m["vitimasfatais_inferido_no_silver"] == 1
+    assert m["vitimasfatais_vazias_no_silver"] == 1
 
 
-def test_vitimasfatais_inferido_e_nulo_quando_coluna_ausente(tmp_path):
-    """2015 não tem a coluna: 'vitimasfatais_inferido' deve ser nulo (não
-    aplicável), não False — False implicaria que a coluna existia."""
+def test_contagem_vazia_continua_zero_com_vitimasfatais_vazia(tmp_path):
+    """
+    Regressão: o parser próprio de vitimasfatais NÃO pode vazar para as
+    contagens de veículo — na mesma linha, 'moto' vazio continua 0 (ADR-006)
+    enquanto 'vitimasfatais' vazio vira NA.
+    """
+    caminho = _escreve_csv(tmp_path, [_linha_2024(moto="", vitimasfatais="")])
+    df, _ = transform(caminho, 2024)
+    assert df.loc[0, "moto"] == 0
+    assert pd.isna(df.loc[0, "vitimasfatais"])
+
+
+def test_vitimasfatais_vazias_nao_se_aplica_quando_coluna_ausente(tmp_path):
+    """2015 não tem a coluna: a métrica de vazias é None (não aplicável),
+    não 0 — 0 implicaria que a coluna existia e estava toda preenchida."""
     caminho = _escreve_csv(tmp_path, [_linha_2015()])
-    df, _ = transform(caminho, 2015)
-    assert pd.isna(df.loc[0, "vitimasfatais_inferido"])
+    _, m = transform(caminho, 2015)
+    assert m["vitimasfatais_vazias_no_silver"] is None
  
  
 # --- Testes de limpeza de campos ------------------------------------------

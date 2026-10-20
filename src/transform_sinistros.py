@@ -15,9 +15,9 @@ Resumo do que mais pega gente de surpresa:
   - SWAP tipo<->natureza: o significado de 'tipo' e 'natureza' inverteu entre
     2015 e 2024. NÃO mapeamos por nome de coluna; detectamos qual coluna é
     SEVERIDADE pelos VALORES (ver _detecta_coluna_severidade).
-  - 'vitimasfatais' ausente num ano => NULO, jamais 0. Quando a coluna existe
-    mas a célula está vazia (comum em 2016-2020), vira 0 — inferência
-    documentada e sinalizada em 'vitimasfatais_inferido' (ver ADR-014).
+  - 'vitimasfatais' ausente num ano => NULO, jamais 0. Célula vazia com a
+    coluna presente (comum em 2016-2020) também => NULO: vazio ali é
+    "desconhecido", não "zero mortes" (ver ADR-006 e ADR-014).
   - Vazio em contagem de veículo => 0 (inferência documentada).
   - 'vitimas' mantido cru: o dicionário oficial afirma uma regra que o dado de
     2015 desmente, então não derivamos "total de vítimas".
@@ -54,7 +54,7 @@ COLS_SILVER = (
      "severidade", "severidade_original", "severidade_anomala", "tipo_sinistro",
      "bairro", "bairro_original", "endereco", "numero", "complemento"]
     + COLS_CONTAGEM
-    + ["vitimas", "vitimasfatais", "vitimasfatais_inferido"]
+    + ["vitimas", "vitimasfatais"]
 )
  
  
@@ -81,8 +81,27 @@ def _to_int(v: str):
         return int(round(float(s)))
     except ValueError:
         return None
- 
- 
+
+
+def _to_int_ou_na(v: str):
+    """
+    Parser próprio de 'vitimasfatais'. Igual a _to_int, EXCETO no vazio:
+    '1'   -> 1
+    '2,0' -> 2
+    ''    -> pd.NA (desconhecido — NUNCA 0; ver ADR-006)
+    lixo  -> None (sinaliza anomalia em vez de mascarar)
+    Achado real: em 2016-2020 a coluna existe mas >99% das células estão
+    vazias. Ler esse vazio como 0 afirmaria "zero mortes" sem base no dado.
+    """
+    s = str(v).strip().replace(",", ".")
+    if s == "" or s.lower() == "nan":
+        return pd.NA
+    try:
+        return int(round(float(s)))
+    except ValueError:
+        return None
+
+
 def _trunca_hora(v: str):
     """'11:36:00.000' -> '11:36:00' ; '06:05:00' -> '06:05:00'."""
     s = str(v).strip()
@@ -262,25 +281,31 @@ def transform(caminho_csv: str, ano: int) -> tuple[pd.DataFrame, dict]:
 
     out["vitimas"] = bruto["vitimas"].map(_to_int) if "vitimas" in bruto.columns else 0
 
-    # vitimasfatais: coluna ausente no ano => NULO (nunca 0). Quando a
-    # coluna existe mas a CÉLULA está vazia (achado real: >99% vazia em
-    # 2016-2020), vira 0 — inferência documentada, sinalizada em
-    # 'vitimasfatais_inferido' para quem for somar poder excluir se quiser
-    # ser conservador. Ver ADR-014.
-    if "vitimasfatais" in bruto.columns:
-        vitimasfatais_vazia = bruto["vitimasfatais"].map(lambda x: _norm_texto(x) == "")
-        out["vitimasfatais"] = bruto["vitimasfatais"].map(_to_int)
-        out["vitimasfatais_inferido"] = vitimasfatais_vazia.values
+    # vitimasfatais: coluna ausente no ano => NULO (nunca 0). Coluna presente
+    # com CÉLULA vazia (achado real: >99% vazia em 2016-2020) => NULO também,
+    # via parser próprio (_to_int_ou_na) — diferente das contagens de
+    # veículo. '_vitimasfatais_vazia' é auxiliar só para a métrica; não vai
+    # para o silver. Ver ADR-006 e ADR-014.
+    tem_vitimasfatais = "vitimasfatais" in bruto.columns
+    if tem_vitimasfatais:
+        out["vitimasfatais"] = bruto["vitimasfatais"].map(_to_int_ou_na)
+        out["_vitimasfatais_vazia"] = (
+            bruto["vitimasfatais"].map(lambda x: _norm_texto(x) == "").values
+        )
     else:
         out["vitimasfatais"] = pd.NA
-        out["vitimasfatais_inferido"] = pd.NA
  
     situacao = bruto["situacao"].map(lambda x: _norm_texto(x).upper())
  
     # Filtro de qualidade: só acidentes confirmados.
     mask_final = situacao == "FINALIZADA"
     out = out[mask_final.values].reset_index(drop=True)
- 
+
+    # Contado antes da projeção final, que descarta a coluna auxiliar.
+    # None quando a coluna nem existe no ano: não aplicável, não "zero vazias".
+    vitimasfatais_vazias = (
+        int(out["_vitimasfatais_vazia"].sum()) if tem_vitimasfatais else None
+    )
     out = out[COLS_SILVER]
  
     metricas = {
@@ -300,10 +325,8 @@ def transform(caminho_csv: str, ano: int) -> tuple[pd.DataFrame, dict]:
         "contagens_nao_parseaveis": int(out[COLS_CONTAGEM].isna().any(axis=1).sum()),
         "bairros_nao_informados": int((out["bairro"] == "NÃO INFORMADO").sum()),
         "bairros_distintos": int(out["bairro"].nunique()),
-        "tem_vitimasfatais": "vitimasfatais" in bruto.columns,
-        "vitimasfatais_inferido_no_silver": int(
-            pd.Series(out["vitimasfatais_inferido"]).fillna(False).astype(bool).sum()
-        ),
+        "tem_vitimasfatais": tem_vitimasfatais,
+        "vitimasfatais_vazias_no_silver": vitimasfatais_vazias,
     }
     return out, metricas
  
@@ -326,7 +349,7 @@ def _gera_relatorio_qualidade_md(lista_metricas: list[dict]) -> str:
         ("datas_fora_do_ano", "Datas fora do ano"),
         ("bairros_nao_informados", "Bairro não informado"),
         ("bairros_distintos", "Bairros distintos"),
-        ("vitimasfatais_inferido_no_silver", "vitimasfatais inferido (vazio->0)"),
+        ("vitimasfatais_vazias_no_silver", "vitimasfatais vazias"),
     ]
     linhas = ["# Relatório de qualidade — camada silver", ""]
     linhas.append("Gerado por `src/transform_sinistros.py`. Ver `docs/decisions.md` (ADR-014) "
