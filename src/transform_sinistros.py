@@ -378,6 +378,8 @@ if __name__ == "__main__":
 
     achou = False
     todas_metricas = []
+    silver_por_ano = []
+    gravados = []  # (caminho, linhas) de cada arquivo escrito em disco
     for ano in ANOS:
         # Aceita o nome limpo; ajuste o padrão se seus arquivos tiverem outro.
         candidatos = list(RAW.glob(f"*{ano}*.csv"))
@@ -387,9 +389,11 @@ if __name__ == "__main__":
         achou = True
         df, m = transform(str(candidatos[0]), ano)
         todas_metricas.append(m)
+        silver_por_ano.append(df)
 
         destino = SILVER / f"sinistros_{ano}.csv"
         df.to_csv(destino, sep=";", index=False, encoding="utf-8")
+        gravados.append((destino, len(df)))
 
         print(f"  {ano}: {m['linhas_entrada']:>6} -> {m['linhas_silver']:>6} silver "
               f"| descartadas={m['descartadas_nao_finalizada']:>5} "
@@ -404,8 +408,21 @@ if __name__ == "__main__":
         print("\nNenhum CSV encontrado. Baixe os arquivos anuais do portal e "
               "coloque em data/raw/ (ver data/README.md).")
     else:
+        # Consolidado: só os anos efetivamente encontrados. Se faltar algum,
+        # avisa — o arquivo NÃO representa os 10 anos nesse caso.
+        consolidado = pd.concat(silver_por_ano, ignore_index=True)
+        destino_consolidado = SILVER / "sinistros_consolidado.csv"
+        consolidado.to_csv(destino_consolidado, sep=";", index=False, encoding="utf-8")
+        gravados.append((destino_consolidado, len(consolidado)))
+        anos_gravados = [m["ano"] for m in todas_metricas]
+        if len(anos_gravados) != len(ANOS):
+            print(f"\nATENÇÃO: consolidado cobre só {anos_gravados}, não os {len(ANOS)} anos.")
+
+        print("\nArquivos gravados:")
+        for caminho, n in gravados:
+            print(f"  {caminho}  ({n} linhas)")
+
         relatorio = _gera_relatorio_qualidade_md(todas_metricas)
         destino_relatorio = RAIZ / "docs" / "relatorio_qualidade_silver.md"
         destino_relatorio.write_text(relatorio, encoding="utf-8")
-        print(f"\nSilver gravado em: {SILVER}")
-        print(f"Relatório de qualidade gravado em: {destino_relatorio}")
+        print(f"\nRelatório de qualidade gravado em: {destino_relatorio}")
