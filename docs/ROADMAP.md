@@ -19,6 +19,7 @@ Fase 0 — Fundações locais (sem AWS, custo zero) ✅ CONCLUÍDA
  Baixar os 10 anos (2015–2024) e colocar em data/raw/
  Rodar o transform nos 10 anos e conferir as métricas de cada um — todos os 10 anos passam sem erro.
  Validação de qualidade por ano (09/10/2026): anomalias reais tratadas (ver ADR-014), silver persistido em data/silver/ (CSV) e relatório de qualidade em docs/relatorio_qualidade_silver.md.
+ Dedup técnico (20/10/2026): linha idêntica ou protocolo repetido, depois do filtro FINALIZADA (ver ADR-015). Removeu 1 linha em 2017 e 1 em 2021.
 
 Achados da varredura completa (2015–2024):
 

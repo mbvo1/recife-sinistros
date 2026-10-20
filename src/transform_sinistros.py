@@ -227,8 +227,10 @@ def transform(caminho_csv: str, ano: int) -> tuple[pd.DataFrame, dict]:
  
     out = pd.DataFrame()
  
-    # Chave: protocolo nativo (2017+) ou sintético (anos sem chave).
-    if "protocolo" in bruto.columns:
+    # Chave: protocolo nativo (só 2022-2024 nos CSVs reais) ou sintético
+    # (anos sem chave).
+    tem_protocolo = "protocolo" in bruto.columns
+    if tem_protocolo:
         out["id_sinistro"] = bruto["protocolo"].map(_limpa_protocolo)
     else:
         out["id_sinistro"] = [f"{ano}-{i:06d}" for i in range(linhas_entrada)]
@@ -300,6 +302,23 @@ def transform(caminho_csv: str, ano: int) -> tuple[pd.DataFrame, dict]:
     # Filtro de qualidade: só acidentes confirmados.
     mask_final = situacao == "FINALIZADA"
     out = out[mask_final.values].reset_index(drop=True)
+    bruto_final = bruto[mask_final].reset_index(drop=True)
+
+    # Dedup técnico, SÓ depois do filtro (cada linha descartada cai em uma
+    # única métrica). Dois critérios, nesta ordem — ver ADR-015:
+    #   1. linha idêntica em TODAS as colunas do bruto (texto cru, sem
+    #      normalizar — diferença de espaço já não é duplicata);
+    #   2. mesmo protocolo repetido entre as linhas restantes (só anos com
+    #      protocolo nativo; id sintético nunca repete).
+    # Mantém a primeira ocorrência.
+    dup_linha = bruto_final.duplicated(keep="first")
+    dup_protocolo = pd.Series(False, index=out.index)
+    if tem_protocolo:
+        restantes = out.loc[~dup_linha, "id_sinistro"]
+        dup_protocolo.loc[restantes.index] = (
+            restantes.duplicated(keep="first") & restantes.notna()
+        )
+    out = out[~(dup_linha | dup_protocolo)].reset_index(drop=True)
 
     # Contado antes da projeção final, que descarta a coluna auxiliar.
     # None quando a coluna nem existe no ano: não aplicável, não "zero vazias".
@@ -313,6 +332,8 @@ def transform(caminho_csv: str, ano: int) -> tuple[pd.DataFrame, dict]:
         "linhas_entrada": linhas_entrada,
         "linhas_silver": len(out),
         "descartadas_nao_finalizada": int((~mask_final).sum()),
+        "duplicados_linha_identica": int(dup_linha.sum()),
+        "duplicados_protocolo": int(dup_protocolo.sum()),
         "coluna_severidade_detectada": col_sev,
         "coluna_especie_detectada": col_tipo,
         "severidade_ruido_no_bruto": sev_linhas_ruido,
@@ -397,6 +418,8 @@ if __name__ == "__main__":
 
         print(f"  {ano}: {m['linhas_entrada']:>6} -> {m['linhas_silver']:>6} silver "
               f"| descartadas={m['descartadas_nao_finalizada']:>5} "
+              f"| dup_identica={m['duplicados_linha_identica']} "
+              f"dup_protocolo={m['duplicados_protocolo']} "
               f"| sev='{m['coluna_severidade_detectada']}' esp='{m['coluna_especie_detectada']}' "
               f"| sev_vazia={m['severidade_vazia_no_silver']:>4} "
               f"| sev_fora_padrao={m['severidade_fora_padrao_no_silver']:>2} "

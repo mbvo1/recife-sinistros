@@ -208,7 +208,8 @@ def test_data_fora_do_ano_e_sinalizada_mas_nao_corrigida(tmp_path):
     arquivo de 2024, causa desconhecida. O transform NÃO corrige a data —
     só marca 'data_fora_do_ano'=True, preservando a data original.
     """
-    linhas = [_linha_2024(data="2024-01-01"), _linha_2024(data="2025-12-31")]
+    linhas = [_linha_2024(Protocolo="1,0", data="2024-01-01"),
+              _linha_2024(Protocolo="2,0", data="2025-12-31")]
     caminho = _escreve_csv(tmp_path, linhas)
     df, m = transform(caminho, 2024)
     assert m["datas_fora_do_ano"] == 1
@@ -228,7 +229,67 @@ def test_filtro_finalizada(tmp_path):
     assert m["linhas_entrada"] == 3
     assert m["linhas_silver"] == 1
     assert m["descartadas_nao_finalizada"] == 2
- 
+
+
+# --- Testes de dedup técnico (ADR-015) ------------------------------------
+
+def test_dedup_remove_linha_identica(tmp_path):
+    """
+    Critério 1: linha idêntica em todas as colunas é registro em dobro.
+    Achado real: 1 par assim em 2017 e 1 em 2021 (anos sem protocolo).
+    """
+    linhas = [_linha_2015(), _linha_2015(), _linha_2015(bairro="DERBY")]
+    caminho = _escreve_csv(tmp_path, linhas)
+    df, m = transform(caminho, 2015)
+    assert m["linhas_silver"] == 2
+    assert m["duplicados_linha_identica"] == 1
+    assert m["duplicados_protocolo"] == 0
+    assert list(df["bairro"]) == ["BOA VIAGEM", "DERBY"]
+
+
+def test_dedup_remove_protocolo_repetido_mantendo_primeiro(tmp_path):
+    """
+    Critério 2: mesmo protocolo com conteúdo diferente (aqui, a hora) é o
+    mesmo chamado registrado duas vezes. Fica a primeira ocorrência.
+    """
+    linhas = [_linha_2024(hora="06:05:00"), _linha_2024(hora="06:10:00")]
+    caminho = _escreve_csv(tmp_path, linhas)
+    df, m = transform(caminho, 2024)
+    assert m["linhas_silver"] == 1
+    assert m["duplicados_protocolo"] == 1
+    assert m["duplicados_linha_identica"] == 0
+    assert df.loc[0, "hora"] == "06:05:00"
+
+
+def test_dedup_nao_remove_sinistros_distintos(tmp_path):
+    """
+    Não é duplicata: (a) conteúdo igual mas protocolos diferentes — dois
+    chamados; (b) sem protocolo, mesmo local e hora mas um campo diferente
+    (número de autos) — pode ser outro sinistro, não há como provar que não.
+    """
+    caminho = _escreve_csv(tmp_path, [
+        _linha_2024(Protocolo="1,0"), _linha_2024(Protocolo="2,0"),
+    ])
+    _, m = transform(caminho, 2024)
+    assert m["linhas_silver"] == 2
+    assert m["duplicados_linha_identica"] + m["duplicados_protocolo"] == 0
+
+    caminho = _escreve_csv(tmp_path, [_linha_2015(auto="1"), _linha_2015(auto="2")])
+    _, m = transform(caminho, 2015)
+    assert m["linhas_silver"] == 2
+    assert m["duplicados_linha_identica"] + m["duplicados_protocolo"] == 0
+
+
+def test_dedup_roda_depois_do_filtro_finalizada(tmp_path):
+    """Par idêntico de CANCELADA conta só como descartada, nunca como
+    duplicata — cada linha removida cai em uma única métrica."""
+    linhas = [_linha_2015(), _linha_2015(situacao="CANCELADA"),
+              _linha_2015(situacao="CANCELADA")]
+    caminho = _escreve_csv(tmp_path, linhas)
+    _, m = transform(caminho, 2015)
+    assert m["descartadas_nao_finalizada"] == 2
+    assert m["duplicados_linha_identica"] == 0
+
  
 # --- Testes de vitimasfatais (ausente => NULO, nunca 0) -------------------
  
@@ -259,7 +320,8 @@ def test_vitimasfatais_celula_vazia_com_coluna_presente_vira_nulo(tmp_path):
     como "zero mortes". Vazio deve virar NA (desconhecido), e ser contado
     na métrica 'vitimasfatais_vazias_no_silver'.
     """
-    linhas = [_linha_2024(vitimasfatais=""), _linha_2024(vitimasfatais="1,0")]
+    linhas = [_linha_2024(Protocolo="1,0", vitimasfatais=""),
+              _linha_2024(Protocolo="2,0", vitimasfatais="1,0")]
     caminho = _escreve_csv(tmp_path, linhas)
     df, m = transform(caminho, 2024)
     assert pd.isna(df.loc[0, "vitimasfatais"])

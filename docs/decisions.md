@@ -133,3 +133,18 @@ Rodando o transform nos 10 anos reais (2015-2024) em 09/10/2026, a validação e
 5. **Persistência do silver**: `data/silver/sinistros_<ano>.csv` (CSV, não Parquet — zero dependência nova, simplicidade, projeto pequeno; `pyarrow` ficaria pendente para quando/se o volume ou a necessidade de tipos nativos justificar). Já estava no `.gitignore` (dado derivado, não versionado — mesma lógica de `data/raw/`). Relatório de qualidade por ano em `docs/relatorio_qualidade_silver.md` (versionado, para citar).
 
 Pendências conscientemente fora de escopo desta rodada (ver ROADMAP): variação de volume bruto entre anos (2019→2024) não investigada a fundo — hipótese de pandemia não confirmada, documentada como limitação, não "corrigida".
+
+ADR-015 — Dedup técnico: só o que é comprovadamente registro em dobro
+
+O silver remove apenas duplicados técnicos, depois do filtro FINALIZADA (ADR-005), por dois critérios aplicados nesta ordem, sempre mantendo a primeira ocorrência:
+
+1. **Linha idêntica em todas as colunas do bruto**, comparando o texto cru (sem normalizar espaço, caixa ou acento — se diferir em qualquer caractere, não é duplicata). Métrica: `duplicados_linha_identica`.
+2. **Mesmo protocolo repetido** entre as linhas que sobraram. Só se aplica a anos com protocolo nativo; o id sintético dos outros anos é único por construção. Métrica: `duplicados_protocolo`.
+
+Por que depois do filtro: assim cada linha removida cai em uma única métrica — um par idêntico de CANCELADA conta como descartada, não como duplicata — e `linhas_entrada = linhas_silver + descartadas_nao_finalizada + duplicados_linha_identica + duplicados_protocolo`.
+
+O que NÃO é removido: linhas parecidas que diferem em qualquer campo (ex.: mesmo local, data e hora, mas outro número de autos) e linhas de conteúdo igual com protocolos diferentes. Num cruzamento movimentado, dois sinistros no mesmo minuto são plausíveis; sem uma chave que prove o contrário, removê-los apagaria acidente real. Não fazemos dedup "por semelhança".
+
+Achados reais (20/10/2026, CSVs de data/raw/): `protocolo` só existe em 2022-2024, e nesses anos não há nenhum protocolo repetido. Linhas idênticas: 1 par em 2017 e 1 par em 2021 (ambos FINALIZADA, mesma data/hora/endereço/contagens); 0 nos outros anos. Ou seja, a dedup removeu 2 linhas em 10 anos.
+
+Ressalva sobre o critério 2: "manter a primeira" é arbitrário quando o protocolo repete com conteúdo DIFERENTE (pode ser uma correção posterior do chamado, e aí a última seria a certa). Como hoje há zero casos reais, a escolha não afeta nenhum número. Se aparecer caso real, inspecionar antes de confiar na regra.
